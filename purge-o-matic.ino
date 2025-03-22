@@ -50,15 +50,13 @@ void set_display_labels(){
 }
 
 void update_switch_status(int switchState) {
-  //lcd.setCursor(14,1);
+  
   if(switchState == 1){
     running = 1;
-    //lcd.print("1");
     switched_on_millis = millis();
   }
   else {
     running = 0;
-    //lcd.print("-");
     switched_on_millis = 0UL;
   }
 }
@@ -169,9 +167,6 @@ void loop() {
     update_display();
     update_switch_status(digitalRead(switchPin));
     
-    //Purge
-    //digitalWrite(relayPin, HIGH);
-    //delay(100);
     ventingState = false;
     digitalWrite(relayPin, LOW); //close valve for 10
     update_state_label(running);
@@ -218,12 +213,6 @@ void welcome_screen() {
   lcd.clear();
 }
 
-void display_seconds() {
-    lcd.setCursor(0,1);
-    lcd.print("Counter:");
-    lcd.print(millis() / 1000);
-}
-
 void update_display () {
   //PSI
   update_psi();
@@ -231,6 +220,9 @@ void update_display () {
   //"STAGE"
 
   //MINS
+  lcd.setCursor(5 ,1);
+  unsigned long mins = (millis() - switched_on_millis) / 60000 ;
+  lcd.print(mins);
 
   //LOOP
   lcd.setCursor(14, 1);
@@ -238,6 +230,8 @@ void update_display () {
   if(loops == 0){
     lcd.print("--");
   } else {
+    if(loops<10)
+      lcd.print(" ");
     lcd.print(loops);
   }
 
