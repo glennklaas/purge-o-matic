@@ -1,23 +1,24 @@
 #include <LiquidCrystal_I2C.h>
-
+const int rPin1 = 3;
+const int switchPin = 2;
+int lastSampleTime = 0;
+int pressureHistory[4] = {0, 0, 0, 0};
 const float MAX_RANGE = 1023.0;
 const float MAX_PSI = 60.0;
-const int switchPin = 2;
-const int relayPin = 3;
-const int freqPin = 4;
-float prevPSI = 0.0;
-float curPSI = 0.0;
 float deltaPSI = 0.0;
+int completedProgramLoops = 0;
 
-int loops = 0;
-bool running = 0;
-bool needToProcessStop = false;
-bool ventingState = false;
 
-unsigned long int switched_on_millis=0UL;
-unsigned long int lastDeltaCheck=0UL;
-
-enum stage {STOPPED, RUNNING_PURGE, RUNNING_BURP};
+//initialize running state to 0
+//run state 0 = in standby
+//run state 1 = purge cycle
+//run state 2 = burp cycle
+//run state 3 = completed cycle, ready to start next cycle
+int runningState = 0;
+int burpLoops = 2; //total number to be performed
+int burpCounter = 0; //initialize to 0, sequential counter var
+int initialValveClose = 0;
+int startTime = 0;
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
@@ -26,180 +27,13 @@ void setup() {
   Serial.begin(9600); 
 
   pinMode(switchPin, INPUT);
-  pinMode(relayPin, OUTPUT);
-  pinMode(freqPin, OUTPUT);
+  pinMode(rPin1, OUTPUT);
 
   lcd.init();
   lcd.backlight();
   welcome_screen();
-  set_display_labels();
-  running = digitalRead(switchPin);
-  digitalWrite(freqPin, LOW);
-  update_state_label(running);
-}
-
-void set_display_labels(){
-  lcd.setCursor(12,0);
-  lcd.print(":---");
-  lcd.setCursor(0,0);
-  lcd.print("PSI:--");
-  lcd.setCursor(9,1);
-  lcd.print("LOOP:");
-  lcd.setCursor(0,1);
-  lcd.print("MINS:---");
-}
-
-void update_switch_status(int switchState) {
-  //lcd.setCursor(14,1);
-  if(switchState == 1){
-    running = 1;
-    //lcd.print("1");
-    switched_on_millis = millis();
-  }
-  else {
-    running = 0;
-    //lcd.print("-");
-    switched_on_millis = 0UL;
-  }
-}
-
-void update_state_label(int state) {
-  
-  lcd.setCursor(7,0);
-  switch(state){
-    case 0:
-      lcd.print(" STOP");
-      break;
-    case 1:
-      lcd.print("PURGE");
-      break;
-    case 2:
-      lcd.print(" BURP");
-      break;
-    default:
-      lcd.print("ERROR");
-      break;
-  }
-
-}
-
-void delay_with_updates(int milliseconds){
-  
-  unsigned long previousMillis = millis();
-  unsigned long currentMillis = previousMillis;
-  unsigned long interval = milliseconds;
-  
-  while(true) {
-    
-    // Check if run switch has been turned off
-    if(digitalRead(switchPin) == 0 ) {
-      needToProcessStop = true;
-      break;
-    }
-
-    //Update Cycle secs
-    lcd.setCursor(13,0);
-    lcd.print((currentMillis - previousMillis)/1000);
-    //Serial.println((currentMillis - previousMillis)/1000);
-    //Serial.println(deltaPSI);
-    if(currentMillis - previousMillis > interval) { 
-    //if(deltaPSI < 0.05){
-      break;
-    }
-
-   update_display();
-
-    currentMillis = millis();
-  }
-}
-
-void update_psi(){
-  if(running==1){
-    digitalWrite(freqPin, !digitalRead(freqPin)); //scope freq
-    //comparison
-    curPSI = analogRead(A0); //rewrite current data
-    
-
-    //Delta processing 
-    if((millis() - lastDeltaCheck > 1000) && ventingState == false) {
-      deltaPSI = abs((prevPSI-curPSI)/(curPSI+1)); //compare old to new, percentage change return
-      lastDeltaCheck = millis();
-      prevPSI = curPSI;
-      Serial.println(deltaPSI);
-    }
-
-  
-    int psi = (curPSI / MAX_RANGE) * MAX_PSI; //math to convert 0-1023 to PSI
-    
-
-    lcd.setCursor(4, 0);
-    if(psi < 10)
-      lcd.print(" ");    
-    lcd.print(psi);
-  } else {
-    clear_psi();
-  }
-}
-
-void clear_psi(){
-  lcd.setCursor(0,0);
-  lcd.print("PSI:--");  
-}
-
-void update_mins(){
-  lcd.setCursor(0,1);
-  lcd.print("000");
-}
-
-void clear_mins(){
-  lcd.setCursor(0,1);
-  lcd.print("MINS:---");
-}
-
-void clear_secs(){
-  lcd.setCursor(13,0);
-  lcd.print("---");
-}
-
-void loop() {
-  loops = loops + 1;
-
-  if(running == 1) {
-
-    update_display();
-    update_switch_status(digitalRead(switchPin));
-    
-    //Purge
-    //digitalWrite(relayPin, HIGH);
-    //delay(100);
-    ventingState = false;
-    digitalWrite(relayPin, LOW); //close valve for 10
-    update_state_label(running);
-    delay_with_updates(10000);
-    ventingState = true;
-    digitalWrite(relayPin, HIGH); //open valve for .5 seconds
-    delay_with_updates(500);
-
-    if(needToProcessStop){
-      needToProcessStop=false;
-    }else{
-      
-      //Burp
-      update_state_label(running + 1);
-      delay_with_updates(3000);
-    }
-
-
-  } else {
-    loops=0;
-    clear_psi();
-    clear_secs();
-
-    update_state_label(running);
-    update_switch_status(digitalRead(switchPin));
-    digitalWrite(relayPin, LOW); //close valve
-
-  }
+  digitalWrite(rPin1, LOW);
+  //digitalWrite(rPin1, HIGH);
 }
 
 void welcome_screen() {
@@ -212,33 +46,143 @@ void welcome_screen() {
   lcd.print(" Purge-O-Matic");
   lcd.setCursor(0,1);
   lcd.print("  Version 1.0");
-  delay(3000);
+  delay(500);
   
   //clear screen
   lcd.clear();
 }
 
-void display_seconds() {
-    lcd.setCursor(0,1);
-    lcd.print("Counter:");
-    lcd.print(millis() / 1000);
-}
-
-void update_display () {
-  //PSI
-  update_psi();
-
-  //"STAGE"
-
-  //MINS
-
-  //LOOP
-  lcd.setCursor(14, 1);
+void loop() {
   
-  if(loops == 0){
-    lcd.print("--");
-  } else {
-    lcd.print(loops);
-  }
+  //Serial.println(runningState);
+  	//interrupt if switched off
+	if(digitalRead(switchPin) == 0){
+ 		runningState = 0;
+      	digitalWrite(rPin1,LOW);
+	}
+
+  
+  	switch (runningState) {
+  case 0:
+      //positive going transition to the on state, record start time
+    if(digitalRead(switchPin) == HIGH){
+      startTime = millis();
+      runningState = 1;
+    }
+    break;
+      
+  case 1:
+      //purge running state
+      if(initialValveClose == 0){
+        digitalWrite(rPin1,LOW);
+        initialValveClose = 1;
+      }
+        //delay(500);
+      	//if pressure isnt changing appreciably while valve is shut, open valve
+        if(deltaPSI<.05 && digitalRead(rPin1) == LOW){
+        digitalWrite(rPin1,HIGH);
+      	}
+      
+        //wait for vented pressure to go below 1psi with valve open
+        if(analogRead(A0) < 17 && digitalRead(rPin1) == HIGH){
+        runningState = 2; 
+        initialValveClose = 0;
+        } 
+      
+    break;
+  case 2:
+    // burp running state
+      
+      if(initialValveClose == 0){
+      digitalWrite(rPin1,LOW);
+        initialValveClose = 1;
+      }
+      //delay(500);
+      //close valve to begin burp
+      if(burpCounter < burpLoops){
+        //begin a burp
+      digitalWrite(rPin1, LOW);
+      
+        //if pressure isnt changing appreciably while valve is shut, open valve
+        if(deltaPSI<.05 && digitalRead(rPin1) == LOW){
+        digitalWrite(rPin1,HIGH);
+      	}
+        else{
+        digitalWrite(rPin1,LOW);
+        }
+        
+        //wait for vented pressure to go below 1psi with valve open
+        if(analogRead(A0) < 17 && digitalRead(rPin1) == HIGH){
+        runningState = 2;   
+        initialValveClose = 0;
+        } 
+      burpCounter = burpCounter + 1;
+      }
+      else if (burpCounter >= 5){
+        burpCounter = 0;
+        runningState = 3;
+      }             
+    break;
+      
+  case 3:
+    //end, ready to start next round
+    runningState = 1;
+    completedProgramLoops = completedProgramLoops + 1;
+    break;
+      
+  default:
+    break;
+
+      
+
+  }//end of switch
+
+
+    if(lastSampleTime == 0){
+    lastSampleTime = millis();
+    }
+      
+    //every 250ms
+    if(millis() - lastSampleTime > 100){
+        
+     	//set new lastSampleTime
+      //Serial.print(millis()-lastSampleTime);
+      lastSampleTime = millis();
+   		//shift last 3 values pressure history array
+   		pressureHistory[3] = pressureHistory[2];
+   		pressureHistory[2] = pressureHistory[1];
+   		pressureHistory[1] = pressureHistory[0];
+   		//set new pressure value to array
+   		pressureHistory[0] = analogRead(A0);
+  	
+   		//calculate deltaPSI from first and last array values
+   		deltaPSI = abs((float(pressureHistory[0]-pressureHistory[3]))/float(pressureHistory[3]+1));
+      
+    }//end of 250ms sampling
+
+
+
+
+
+//update display
+lcd.setCursor(0,0);
+lcd.print(deltaPSI);
+Serial.println(deltaPSI);
+lcd.setCursor(0,1);
+lcd.print(runningState);
+lcd.setCursor(5,1);
+lcd.print(float(analogRead(A0)/17.05));
+//Serial.println(runningState);
+//Serial.println(analogRead(A0));
+//Serial.println(deltaPSI);
+//Serial.print(pressureHistory[0]);
+//Serial.print(", ");
+//Serial.print(pressureHistory[1]);
+//Serial.print(", ");
+//Serial.print(pressureHistory[2]);
+//Serial.print(", ");
+//Serial.println(pressureHistory[3]);
+
+
 
 }
